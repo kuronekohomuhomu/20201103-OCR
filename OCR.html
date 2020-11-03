@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>光学文字認識</title>
+<script src="https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js"></script>
+<script>
+let canvas, context, canvasRect;
+let image = new Image();
+let sx, sy, ex, ey;
+let mouseDown = false;
+
+const init = () => {
+    // キャンバスの取得
+    canvas = document.getElementById("image");
+    context = canvas.getContext("2d");
+    canvasRect = canvas.getBoundingClientRect();
+    // 認識開始ボタンの無効化
+    document.getElementById("start").disabled = true;
+    // マウスイベントの登録
+    canvas.addEventListener("mousedown", startRect);
+    canvas.addEventListener("mousemove", rect);
+    canvas.addEventListener("mouseup", endRect);
+    canvas.addEventListener("mouseleave", endRect);
+}
+
+const loadImage = files => {
+    // 画像の読み込み
+    image.src=URL.createObjectURL(files[0]);
+    image.onload = () => {
+        // 描画
+        draw();
+        [sx, sy, ex, ey] = [0, 0, image.width, image.height];
+        // 認識開始ボタンの有効化
+        document.getElementById("start").disabled = false;
+    }
+}
+
+const draw = () => {
+    // 画像の描画
+    canvas.width = image.width;
+    canvas.height = image.height;
+    context.drawImage(image, 0, 0);
+}
+
+const recognize = async () => {
+    // Tesseractワーカーの作成
+    const worker = new Tesseract.createWorker({
+        logger: showProgress
+    });
+    await worker.load();
+    // 言語、文字間隔の設定
+    const lang = document.getElementById("lang").value;
+    await worker.loadLanguage(lang);
+    await worker.initialize(lang);
+    await worker.setParameters({preserve_interword_spaces: "1"});
+    // 認識
+    let t = sy;
+    if (sy > ey) t = ey;
+    let l = sx;
+    if (sx > ex) l = ex;
+    const w = Math.abs(ex - sx);
+    const h = Math.abs(ey - sy);
+    const result = await worker.recognize(image, {
+        rectangle: {top: t, left: l, width: w, height: h}
+    });
+    document.getElementById("status").innerText += "...完了";
+    document.getElementById("result").value = result.data.text;
+    // 検出位置の描画
+    draw();
+    for (const word of result.data.words) {
+        const pos = word.bbox;
+        let color = "#FF00000";
+        if (word.confidence > 50) color = "#FFCC00";
+        if (word.confidence > 70) color = "#00FF00";
+        drawRect(pos.x0, pos.y0, pos.x1, pos.y1, color);
+    }
+    await worker.terminate();
+}
+
+const showProgress = packet => {
+    // 進捗状況の表示
+    if (packet.progress != undefined) {
+        const per = Math.round(packet.progress * 100);
+        document.getElementById("progress").value = per;
+        document.getElementById("status").innerText = packet.status;
+    }
+}
+
+const drawRect = (x1, y1, x2, y2, color) => {
+    // 矩形の描画
+    context.strokeStyle = color;
+    context.strokeRect(x1, y1, x2-x1, y2-y1);
+}
+
+const startRect = event => {
+    // 始点の取得
+    [sx, sy] = getPoint(event);
+    mouseDown = true;
+}
+
+const rect = event => {
+    // 選択範囲の描画
+    if (mouseDown) {
+        draw();
+        [ex, ey] = getPoint(event);
+        drawRect(sx, sy, ex, ey, "#0000FF");
+    }
+}
+
+const endRect = event => {
+    // 終点の取得
+    if (mouseDown) {
+        [ex, ey] = getPoint(event);
+        mouseDown = false;
+    }
+}
+
+const getPoint = event => {
+    // マウスカーソルの位置を取得
+    const offsetX = document.getElementById("imageArea").scrollLeft;
+    const offsetY = document.getElementById("imageArea").scrollTop;
+    const x = event.clientX - canvasRect.left + offsetX;
+    const y = event.clientY - canvasRect.top + offsetY;
+    return [x, y];
+}
+</script>
+<style>
+progress {width: 100px;}
+#imageArea {
+    margin-right: 5px;
+    width: 800px;
+    height: 400px;
+    border: thin solid #CCCCCC;
+    overflow: auto;
+}
+textarea {
+    width: 800px;
+    height: 200px;
+    padding: 0px;
+    margin-top: 10px;
+}
+</style>
+</head>
+<body onload="init()">
+<p>光学文字認識</p>
+<input type="file" accept="image/*" onchange="loadImage(this.files)">
+言語：<select id="lang">
+<option value="eng" selected>英語</option>
+<option value="jpn">日本語</option>
+<option value="eng+jpn">英語＋日本語</option>
+</select>
+<input type="button" id="start" value="認識開始" onclick="recognize()">
+<progress id="progress" value="0" min="0" max="100"></progress>
+<span id="status"></span>
+<hr>
+<div id="imageArea"><canvas id="image"></canvas></div>
+<textarea id="result"></textarea>
+</body>
+</html>
